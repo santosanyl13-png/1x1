@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ID Studio Pro — Control Station</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- QRCode.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+  <style>
+    .flash-overlay {
+      animation: flash-anim 0.4s ease-out forwards;
+    }
+    @keyframes flash-anim {
+      0% { opacity: 1; background-color: white; }
+      100% { opacity: 0; background-color: transparent; }
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans">
+
+  <script>
+    // Configured to point directly to your deployed mobile camera GitHub Pages repository
+    window.MOBILE_CAMERA_PAGE_URL = "https://santosanyl13-png.github.io/flashbooth-mobile/";
+  </script>
+
+  <!-- Navigation Bar -->
+  <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between shadow-md">
+    <div class="flex items-center space-x-3">
+      <i class="fa-solid fa-id-card text-emerald-400 text-3xl"></i>
+      <h1 class="text-2xl font-bold tracking-wide text-white">ID Studio <span class="text-emerald-400">Pro</span></h1>
+    </div>
+    <div class="flex items-center space-x-3">
+      <!-- Mode Toggle Switch -->
+      <div class="bg-slate-900 p-1 rounded-xl border border-slate-700 flex items-center text-xs font-semibold">
+        <button id="modeWireless" onclick="setConnectionMode('wireless')" class="px-3 py-1.5 rounded-lg text-emerald-400 bg-slate-800 shadow transition flex items-center gap-1.5">
+          <i class="fa-solid fa-wifi"></i> Wireless (High-Res)
+        </button>
+        <button id="modeWired" onclick="setConnectionMode('wired')" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition flex items-center gap-1.5">
+          <i class="fa-solid fa-plug text-emerald-400"></i> USB / DroidCam
+        </button>
+      </div>
+
+      <span id="connectionBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
+        <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span> Disconnected
+      </span>
+      
+      <button id="btnConnectPhone" onclick="handleConnectAction()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-4 py-2 rounded-lg text-sm transition flex items-center gap-2 shadow">
+        <i class="fa-solid fa-qrcode" id="connectBtnIcon"></i> <span id="connectBtnText">Connect Phone</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid Dashboard -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+    
+    <!-- Left Column: Camera Preview & Controls (7 Cols) -->
+    <section class="lg:col-span-7 flex flex-col gap-4">
+      <div class="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden shadow-xl flex flex-col relative">
+        
+        <!-- Viewport Header -->
+        <div class="p-4 border-b border-slate-700/60 flex items-center justify-between bg-slate-800/80">
+          <div class="flex items-center gap-2">
+            <i class="fa-solid fa-video text-slate-400"></i>
+            <span class="font-semibold text-sm text-slate-200" id="streamTypeLabel">Live Wireless HD Stream</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <button onclick="toggleGrid()" id="btnToggleGrid" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow" title="Toggle Face Alignment Grid">
+              <i class="fa-solid fa-table-cells"></i> <span id="gridBtnText">Grid: Off</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Video Viewport -->
+        <div class="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+          <video id="remoteVideo" autoplay playsinline muted class="w-full h-full object-cover"></video>
+          
+          <!-- Center Face Alignment Guide -->
+          <div id="gridOverlay" class="absolute inset-0 pointer-events-none flex items-center justify-center hidden z-15">
+            <div class="w-48 h-56 border-2 border-dashed border-emerald-400/80 rounded-full"></div>
+          </div>
+
+          <!-- Countdown Overlay -->
+          <div id="countdownOverlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm hidden z-20">
+            <span id="countdownText" class="text-9xl font-extrabold text-white drop-shadow-lg animate-bounce">3</span>
+          </div>
+
+          <!-- Flash Effect Overlay -->
+          <div id="flashEffect" class="absolute inset-0 pointer-events-none hidden z-10 transition-opacity duration-200"></div>
+
+          <!-- Disconnected Placeholder -->
+          <div id="videoPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-950/80">
+            <i class="fa-solid fa-plug-circle-xmark text-5xl text-slate-600 mb-3 animate-pulse"></i>
+            <p class="text-slate-300 font-medium">No Camera Connected</p>
+            <p class="text-xs text-slate-500 mt-1 max-w-sm">Click "Connect Phone" above to pair wireless camera or select USB.</p>
+          </div>
+        </div>
+
+        <!-- Capture Trigger Bar -->
+        <div class="p-4 bg-slate-800 flex items-center justify-between gap-4">
+          <button id="btnStartSession" onclick="captureIDPhoto()" disabled class="w-full py-3 px-6 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-lg">
+            <i class="fa-solid fa-camera"></i> Capture ID Photo
+          </button>
+          <button onclick="resetSession()" class="py-3 px-4 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold rounded-xl transition text-sm flex items-center gap-2">
+            <i class="fa-solid fa-rotate-right"></i> Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- ID Format & Background Settings -->
+      <div class="bg-slate-800 rounded-2xl border border-slate-700 p-5 shadow-xl space-y-4">
+        <h3 class="text-base font-semibold text-slate-200 border-b border-slate-700 pb-2 flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-emerald-400"></i> ID Layout & Specifications
+        </h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- ID Size Configuration -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">ID Picture Size</label>
+            <select id="idSizeSelect" onchange="changeIdDimensions()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+              <option value="1x1">1 x 1 Inch (600 x 600 px)</option>
+              <option value="2x2" selected>2 x 2 Inch (1200 x 1200 px)</option>
+              <option value="passport">Passport Size (600 x 750 px)</option>
+              <option value="custom">Custom Pixel Dimensions</option>
+            </select>
+          </div>
+
+          <!-- Background Color -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">ID Background Color</label>
+            <select id="bgColorSelect" onchange="renderIdCanvas()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+              <option value="white">White Background</option>
+              <option value="blue">Royal Blue Background</option>
+              <option value="red">Red Background</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Custom Width & Height Inputs -->
+        <div id="customDimensionsGroup" class="pt-2 border-t border-slate-700/60 hidden grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-emerald-400 mb-1 uppercase tracking-wider">Custom Width (px)</label>
+            <input type="number" id="customWidthInput" value="600" min="100" max="4000" onchange="changeIdDimensions()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-emerald-400 mb-1 uppercase tracking-wider">Custom Height (px)</label>
+            <input type="number" id="customHeightInput" value="600" min="100" max="4000" onchange="changeIdDimensions()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: ID Output Preview & Print (5 Cols) -->
+    <section class="lg:col-span-5 flex flex-col gap-4">
+      <div class="bg-slate-800 rounded-2xl border border-slate-700 p-5 shadow-xl flex flex-col items-center flex-1">
+        <h3 class="text-base font-semibold text-slate-200 mb-2 w-full text-left border-b border-slate-700 pb-2 flex items-center justify-between">
+          <span><i class="fa-solid fa-id-badge text-emerald-400 mr-2"></i> ID Output Preview</span>
+        </h3>
+
+        <!-- Canvas Render Container -->
+        <div class="w-full flex justify-center py-2 items-center bg-slate-950/50 rounded-xl border border-slate-800 p-3">
+          <canvas id="idCanvas" class="max-h-[380px] w-auto shadow-2xl rounded border border-slate-700/50"></canvas>
+        </div>
+
+        <!-- Export & Print Buttons -->
+        <div class="w-full mt-4 space-y-2">
+          <button id="btnPrint" onclick="printId()" disabled class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg shadow transition flex items-center justify-center gap-2 text-sm">
+            <i class="fa-solid fa-print"></i> Print ID Sheet
+          </button>
+
+          <button id="btnDownload" onclick="downloadId()" disabled class="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg shadow transition flex items-center justify-center gap-2 text-sm">
+            <i class="fa-solid fa-download"></i> Download ID PNG
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL: QR Code Pairing -->
+  <div id="qrModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative">
+      <button onclick="closeConnectModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+
+      <h3 class="text-lg font-bold text-white flex items-center gap-2">
+        <i class="fa-solid fa-qrcode text-emerald-400"></i> Connect Wireless Camera
+      </h3>
+
+      <div class="bg-white p-4 rounded-xl flex justify-center items-center mx-auto shadow-inner w-56 h-56">
+        <div id="qrcode"></div>
+      </div>
+
+      <div class="text-xs text-slate-300 space-y-2 text-center">
+        <p class="font-medium text-slate-200">1. Scan QR code using your phone camera.</p>
+        <p class="text-slate-400">2. Keep browser open on your mobile phone.</p>
+      </div>
+
+      <div class="pt-2 border-t border-slate-700 space-y-2">
+        <label class="block text-xs text-slate-400 font-semibold">Direct Mobile Link:</label>
+        <div class="flex items-center gap-2">
+          <input type="text" id="mobileLinkInput" readonly class="bg-slate-900 border border-slate-700 text-xs text-slate-300 px-3 py-2 rounded-lg w-full focus:outline-none select-all">
+          <button onclick="copyMobileLink()" class="bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-2 rounded-lg transition shrink-0">
+            Copy
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: USB Camera Selector -->
+  <div id="usbModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative">
+      <button onclick="closeUsbModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+
+      <h3 class="text-lg font-bold text-white flex items-center gap-2">
+        <i class="fa-solid fa-plug text-emerald-400"></i> USB / DroidCam Selection
+      </h3>
+
+      <div class="space-y-2">
+        <label class="block text-xs font-semibold text-slate-400">Available Cameras:</label>
+        <select id="usbCameraSelect" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          <option value="">Scanning cameras...</option>
+        </select>
+      </div>
+
+      <div class="pt-3 border-t border-slate-700 flex justify-end gap-2">
+        <button onclick="closeUsbModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg">Cancel</button>
+        <button onclick="startUsbCameraStream()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg">Start Camera</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Script Logic -->
+  <script>
+    let connectionMode = 'wireless';
+    let peer = null;
+    let dataConnection = null;
+    let localUsbStream = null;
+    let hostPeerId = '';
+    let isConnected = false;
+    let isGridVisible = false;
+    let capturedPhotoData = null;
+
+    let currentConfig = { width: 1200, height: 1200 }; // Default 2x2
+
+    const remoteVideo = document.getElementById('remoteVideo');
+    const videoPlaceholder = document.getElementById('videoPlaceholder');
+    const connectionBadge = document.getElementById('connectionBadge');
+    const btnStartSession = document.getElementById('btnStartSession');
+    const countdownOverlay = document.getElementById('countdownOverlay');
+    const countdownText = document.getElementById('countdownText');
+    const flashEffect = document.getElementById('flashEffect');
+    const idCanvas = document.getElementById('idCanvas');
+    const btnPrint = document.getElementById('btnPrint');
+    const btnDownload = document.getElementById('btnDownload');
+
+    window.addEventListener('DOMContentLoaded', () => {
+      renderIdCanvas();
+    });
+
+    function changeIdDimensions() {
+      const format = document.getElementById('idSizeSelect').value;
+      const customGroup = document.getElementById('customDimensionsGroup');
+
+      if (format === '1x1') {
+        customGroup.classList.add('hidden');
+        currentConfig = { width: 600, height: 600 };
+      } else if (format === '2x2') {
+        customGroup.classList.add('hidden');
+        currentConfig = { width: 1200, height: 1200 };
+      } else if (format === 'passport') {
+        customGroup.classList.add('hidden');
+        currentConfig = { width: 600, height: 750 };
+      } else if (format === 'custom') {
+        customGroup.classList.remove('hidden');
+        currentConfig = {
+          width: parseInt(document.getElementById('customWidthInput').value) || 600,
+          height: parseInt(document.getElementById('customHeightInput').value) || 600
+        };
+      }
+      renderIdCanvas();
+    }
+
+    function toggleGrid() {
+      isGridVisible = !isGridVisible;
+      document.getElementById('gridOverlay').classList.toggle('hidden', !isGridVisible);
+      document.getElementById('gridBtnText').innerText = isGridVisible ? "Grid: On" : "Grid: Off";
+    }
+
+    function setConnectionMode(mode) {
+      connectionMode = mode;
+      document.getElementById('modeWireless').className = mode === 'wireless' ? "px-3 py-1.5 rounded-lg text-emerald-400 bg-slate-800 shadow transition flex items-center gap-1.5" : "px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition flex items-center gap-1.5";
+      document.getElementById('modeWired').className = mode === 'wired' ? "px-3 py-1.5 rounded-lg text-emerald-400 bg-slate-800 shadow transition flex items-center gap-1.5" : "px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition flex items-center gap-1.5";
+      document.getElementById('connectBtnText').innerText = mode === 'wireless' ? "Connect Phone" : "Select Camera";
+      document.getElementById('connectBtnIcon').className = mode === 'wireless' ? "fa-solid fa-qrcode" : "fa-solid fa-plug";
+    }
+
+    function handleConnectAction() {
+      if (connectionMode === 'wireless') openConnectModal();
+      else openUsbModal();
+    }
+
+    async function openUsbModal() {
+      document.getElementById('usbModal').classList.remove('hidden');
+      const select = document.getElementById('usbCameraSelect');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        stream.getTracks().forEach(t => t.stop());
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        select.innerHTML = '';
+        videoDevices.forEach((dev, idx) => {
+          const opt = document.createElement('option');
+          opt.value = dev.deviceId;
+          opt.innerText = dev.label || `Camera ${idx + 1}`;
+          select.appendChild(opt);
+        });
+      } catch (err) {
+        select.innerHTML = `<option value="">Permission denied</option>`;
+      }
+    }
+
+    function closeUsbModal() { document.getElementById('usbModal').classList.add('hidden'); }
+
+    async function startUsbCameraStream() {
+      const deviceId = document.getElementById('usbCameraSelect').value;
+      if (!deviceId) return;
+      localUsbStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } });
+      remoteVideo.srcObject = localUsbStream;
+      await remoteVideo.play();
+      setConnectionStatus(true);
+      closeUsbModal();
+    }
+
+    function openConnectModal() {
+      document.getElementById('qrModal').classList.remove('hidden');
+      if (!peer || peer.destroyed) {
+        hostPeerId = 'id-' + Math.random().toString(36).substring(2, 8);
+        peer = new Peer(hostPeerId);
+        peer.on('open', (id) => generatePairingQR(id));
+        peer.on('connection', (conn) => {
+          dataConnection = conn;
+          conn.on('data', (packet) => {
+            if (packet.type === 'HIGH_RES_PHOTO') {
+              capturedPhotoData = packet.data;
+              renderIdCanvas();
+              btnPrint.disabled = false;
+              btnDownload.disabled = false;
+            }
+          });
+        });
+        peer.on('call', (call) => {
+          call.answer(null);
+          call.on('stream', (stream) => {
+            remoteVideo.srcObject = stream;
+            remoteVideo.play();
+            setConnectionStatus(true);
+            closeConnectModal();
+          });
+        });
+      } else {
+        generatePairingQR(hostPeerId);
+      }
+    }
+
+    function closeConnectModal() { document.getElementById('qrModal').classList.add('hidden'); }
+
+    function generatePairingQR(id) {
+      let baseUrl = window.MOBILE_CAMERA_PAGE_URL;
+      if (!baseUrl.endsWith('/')) baseUrl += '/';
+      const fullUrl = new URL(baseUrl);
+      fullUrl.searchParams.set('roomId', id);
+      document.getElementById('mobileLinkInput').value = fullUrl.toString();
+      const qrContainer = document.getElementById('qrcode');
+      qrContainer.innerHTML = '';
+      new QRCode(qrContainer, { text: fullUrl.toString(), width: 190, height: 190 });
+    }
+
+    function copyMobileLink() {
+      navigator.clipboard.writeText(document.getElementById('mobileLinkInput').value);
+      alert("Link copied!");
+    }
+
+    function setConnectionStatus(connected) {
+      isConnected = connected;
+      connectionBadge.className = connected ? "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-400 border border-red-500/30";
+      connectionBadge.innerHTML = `<span class="w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'}"></span> ${connected ? 'Connected' : 'Disconnected'}`;
+      videoPlaceholder.classList.add('hidden');
+      btnStartSession.disabled = !connected;
+    }
+
+    function captureIDPhoto() {
+      if (!isConnected) return;
+      countdownOverlay.classList.remove('hidden');
+      let count = 3;
+      countdownText.innerText = count;
+
+      let timer = setInterval(() => {
+        count--;
+        if (count > 0) {
+          countdownText.innerText = count;
+        } else {
+          clearInterval(timer);
+          countdownOverlay.classList.add('hidden');
+          
+          if (connectionMode === 'wireless' && dataConnection && dataConnection.open) {
+            dataConnection.send({ type: 'TRIGGER_HIGH_RES_CAPTURE' });
+          } else {
+            const canvas = document.createElement('canvas');
+            canvas.width = remoteVideo.videoWidth || 1920;
+            canvas.height = remoteVideo.videoHeight || 1080;
+            canvas.getContext('2d').drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
+            capturedPhotoData = canvas.toDataURL('image/png', 1.0);
+            renderIdCanvas();
+            btnPrint.disabled = false;
+            btnDownload.disabled = false;
+          }
+        }
+      }, 1000);
+    }
+
+    function resetSession() {
+      capturedPhotoData = null;
+      btnPrint.disabled = true;
+      btnDownload.disabled = true;
+      renderIdCanvas();
+    }
+
+    function renderIdCanvas() {
+      idCanvas.width = currentConfig.width;
+      idCanvas.height = currentConfig.height;
+      const ctx = idCanvas.getContext('2d');
+
+      const bgChoice = document.getElementById('bgColorSelect').value;
+      const bgColors = { white: '#FFFFFF', blue: '#0033A0', red: '#DA291C' };
+      ctx.fillStyle = bgColors[bgChoice] || '#FFFFFF';
+      ctx.fillRect(0, 0, idCanvas.width, idCanvas.height);
+
+      if (capturedPhotoData) {
+        const img = new Image();
+        img.onload = () => {
+          const hRatio = idCanvas.width / img.width;
+          const vRatio = idCanvas.height / img.height;
+          const ratio = Math.max(hRatio, vRatio);
+          const centerShiftX = (idCanvas.width - img.width * ratio) / 2;
+          const centerShiftY = (idCanvas.height - img.height * ratio) / 2;
+          ctx.drawImage(img, 0, 0, img.width, img.height, centerShiftX, centerShiftY, img.width * ratio, img.height * ratio);
+        };
+        img.src = capturedPhotoData;
+      } else {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Capture ID Photo', idCanvas.width / 2, idCanvas.height / 2);
+      }
+    }
+
+    function printId() {
+      if (!capturedPhotoData) return;
+      const dataUrl = idCanvas.toDataURL('image/png', 1.0);
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(`<html><head><title>Print ID</title></head><body style="margin:0;display:flex;justify-content:center;align-items:center;height:100vh;"><img src="${dataUrl}" style="max-height:100%;" onload="window.print(); window.close();" /></body></html>`);
+      printWindow.document.close();
+    }
+
+    function downloadId() {
+      if (!capturedPhotoData) return;
+      const link = document.createElement('a');
+      link.download = `ID_Photo_${Date.now()}.png`;
+      link.href = idCanvas.toDataURL('image/png', 1.0);
+      link.click();
+    }
+  </script>
+</body>
+</html>

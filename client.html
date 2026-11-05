@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ID Studio Pro — Mobile Camera</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+  <style>
+    .flash-overlay {
+      animation: flash-anim 0.4s ease-out forwards;
+    }
+    @keyframes flash-anim {
+      0% { opacity: 1; background-color: white; }
+      100% { opacity: 0; background-color: transparent; }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans select-none overflow-hidden">
+
+  <!-- Header -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between shadow-lg">
+    <div class="flex items-center space-x-3">
+      <i class="fa-solid fa-id-card text-emerald-400 text-2xl"></i>
+      <h1 class="text-xl font-bold tracking-wide text-white">ID Studio <span class="text-emerald-400">Pro</span></h1>
+    </div>
+    <div id="connectionStatusBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+      <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> Connecting...
+    </div>
+  </header>
+
+  <!-- Main Camera Viewport -->
+  <main class="flex-1 flex flex-col p-4 max-w-lg mx-auto w-full justify-center gap-4">
+    <div class="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl flex flex-col relative aspect-[3/4]">
+      
+      <!-- Local Camera Stream -->
+      <video id="localVideo" autoplay playsinline muted class="w-full h-full object-cover transform -scale-x-100"></video>
+      
+      <!-- Flash Effect Overlay -->
+      <div id="flashEffect" class="absolute inset-0 pointer-events-none hidden z-10 transition-opacity duration-200"></div>
+
+      <!-- Connecting State Message -->
+      <div id="loadingOverlay" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 text-center p-6 z-20">
+        <i class="fa-solid fa-spinner text-5xl text-emerald-400 mb-3 animate-spin"></i>
+        <p class="text-slate-200 font-semibold">Connecting to Control Station...</p>
+        <p class="text-xs text-slate-500 mt-1">Please ensure room ID is valid.</p>
+      </div>
+
+      <!-- Camera Controls -->
+      <div class="absolute bottom-4 left-0 right-0 flex justify-center gap-4 z-20 px-6">
+        <button onclick="switchCamera()" class="p-3.5 bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md text-white rounded-full shadow-lg transition">
+          <i class="fa-solid fa-rotate text-lg"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Status Footer -->
+    <div class="text-center text-xs text-slate-500 py-2">
+      Position yourself in view. The PC station will capture your ID photo automatically.
+    </div>
+  </main>
+
+  <!-- Mobile Client Script Logic -->
+  <script>
+    let peer = null;
+    let localStream = null;
+    let currentFacingMode = 'user';
+    let dataConnection = null;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('roomId');
+
+    const localVideo = document.getElementById('localVideo');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const connectionStatusBadge = document.getElementById('connectionStatusBadge');
+    const flashEffect = document.getElementById('flashEffect');
+
+    window.addEventListener('DOMContentLoaded', () => {
+      if (!roomId) {
+        alert("Invalid room link! Please scan the QR code from the PC Control Station.");
+        return;
+      }
+      startCameraAndConnect(currentFacingMode);
+    });
+
+    async function startCameraAndConnect(facing) {
+      try {
+        if (localStream) {
+          localStream.getTracks().forEach(t => t.stop());
+        }
+
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+
+        localVideo.srcObject = localStream;
+        await localVideo.play();
+
+        if (!peer) {
+          initPeerConnection(roomId);
+        } else {
+          peer.call(roomId, localStream);
+        }
+      } catch (err) {
+        alert("Camera permission error: " + err.message);
+      }
+    }
+
+    function switchCamera() {
+      currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+      startCameraAndConnect(currentFacingMode);
+    }
+
+    function initPeerConnection(id) {
+      peer = new Peer({
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelay', credential: 'openrelay' },
+            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelay', credential: 'openrelay' }
+          ]
+        }
+      });
+
+      peer.on('open', () => {
+        dataConnection = peer.connect(id);
+
+        dataConnection.on('open', () => {
+          connectionStatusBadge.className = "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+          connectionStatusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Connected to PC`;
+          loadingOverlay.classList.add('hidden');
+        });
+
+        dataConnection.on('data', (packet) => {
+          if (packet.type === 'TRIGGER_HIGH_RES_CAPTURE') {
+            triggerHighResCapture();
+          }
+        });
+
+        peer.call(id, localStream);
+      });
+
+      peer.on('error', (err) => {
+        console.error("PeerJS error:", err);
+        connectionStatusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-400"></span> Connection Error`;
+      });
+    }
+
+    function triggerHighResCapture() {
+      flashEffect.classList.remove('hidden');
+      flashEffect.style.backgroundColor = '#ffffff';
+      flashEffect.style.opacity = '1';
+      void flashEffect.offsetWidth;
+      flashEffect.classList.add('flash-overlay');
+
+      setTimeout(() => {
+        flashEffect.classList.remove('flash-overlay');
+        flashEffect.classList.add('hidden');
+        flashEffect.style.backgroundColor = 'transparent';
+      }, 400);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = localVideo.videoWidth || 1920;
+      canvas.height = localVideo.videoHeight || 1080;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+
+      const highResDataUrl = canvas.toDataURL('image/png', 1.0);
+
+      if (dataConnection && dataConnection.open) {
+        dataConnection.send({
+          type: 'HIGH_RES_PHOTO',
+          data: highResDataUrl
+        });
+      }
+    }
+  </script>
+</body>
+</html>
